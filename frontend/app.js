@@ -118,7 +118,6 @@ async function pollHealth() {
     const data = await res.json();
     setStatus(true);
     DOM.headerDevice.textContent = (data.device || "cpu").toUpperCase();
-    DOM.headerModel.textContent  = data.model_path ? data.model_path.replace(".pt"," (GRU)") : "Not Loaded";
     if (!data.model_loaded) { DOM.statusText.textContent="DEGRADED"; DOM.statusDot.className="pulse-dot dot-warning"; }
   } catch { setStatus(false); }
 }
@@ -162,8 +161,9 @@ function evalZone(pos) {
 
 /* ─── Apply latest event to KPIs ─── */
 function applyEvent(ev) {
+  DOM.headerModel.textContent   = ev.model || "Demo / external";
   DOM.kpiActivity.textContent   = ev.activity.toUpperCase();
-  DOM.activityBadge.textContent = `CONF: ${fmtPct(ev.confidence)}`;
+  DOM.activityBadge.textContent = `SCORE: ${fmtPct(ev.confidence)}`;
   DOM.activityBar.style.width   = fmtPct(ev.confidence);
   DOM.kpiConfidence.textContent = fmtPct(ev.confidence);
   DOM.kpiLatency.textContent    = `Latency: ${ev.latency_ms.toFixed(1)} ms`;

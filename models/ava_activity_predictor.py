@@ -1,4 +1,4 @@
-"""AVA pretrained video action recognition for person-bounded clips."""
+"""AVA-finetuned RGB action recognition for person-bounded video clips."""
 import time
 from typing import Sequence
 
@@ -83,7 +83,7 @@ AVA_CLASS_IDS = {
 
 
 class AvaActivityPredictor:
-    """Predict a person action using the pretrained Slow R50 AVA detector."""
+    """Run the pretrained AVA person-action detector on a short RGB clip."""
 
     model_name = "Slow R50 (AVA v2.2)"
 
@@ -94,11 +94,12 @@ class AvaActivityPredictor:
                 from pytorchvideo.models.hub import slow_r50_detection
             except ImportError as exc:
                 raise RuntimeError(
-                    "AVA activity recognition requires PyTorchVideo. Install "
-                    "project dependencies with "
+                    "AVA action recognition requires PyTorchVideo. "
+                    "Install the project dependencies with "
                     "'.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt'."
                 ) from exc
             model = slow_r50_detection(pretrained=True)
+
         self.model = model.eval().to(self.device)
 
     def predict_clip(
@@ -106,35 +107,32 @@ class AvaActivityPredictor:
         frames: Sequence[np.ndarray],
         person_box: Sequence[float],
     ) -> ActivityPrediction:
+        """Classify a person's action from BGR frames and an xyxy pixel box."""
         started = time.perf_counter()
         video, boxes = self._prepare_input(frames, person_box)
 
         with torch.inference_mode():
-            scores = self.model(
-                video.unsqueeze(0).to(self.device),
-                boxes.to(self.device),
-            )
+            scores = self.model(video.unsqueeze(0).to(self.device), boxes.to(self.device))
 
         if not isinstance(scores, torch.Tensor) or scores.ndim != 2 or scores.shape[1] != 80:
             shape = tuple(scores.shape) if isinstance(scores, torch.Tensor) else type(scores).__name__
-            raise RuntimeError(
-                f"Expected AVA output with shape (persons, 80), got {shape}"
-            )
+            raise RuntimeError(f"Expected AVA model output with shape (persons, 80), got {shape}")
         if scores.shape[0] == 0:
-            raise RuntimeError("AVA returned no action scores for the detected person")
+            raise RuntimeError("AVA model returned no action scores for the detected person")
 
         score_vector = scores[0].detach().float().cpu()
         if not torch.isfinite(score_vector).all():
-            raise RuntimeError("AVA returned non-finite action scores")
+            raise RuntimeError("AVA model returned non-finite action scores")
         if (score_vector < 0).any() or (score_vector > 1).any():
             score_vector = torch.sigmoid(score_vector)
 
-        action_id = int(score_vector.argmax().item()) + 1
-        activity = AVA_ACTIONS.get(action_id, f"other_activity_{action_id}")
-        confidence = float(score_vector[action_id - 1].item())
+        top_index = int(score_vector.argmax().item())
+        ava_id = top_index + 1
+        activity = AVA_ACTIONS.get(ava_id, f"other_activity_{ava_id}")
+        confidence = float(score_vector[top_index].item())
         probabilities = {
-            name: round(float(score_vector[class_id - 1].item()), 4)
-            for class_id, name in AVA_CLASS_IDS.items()
+            name: round(float(score_vector[action_id - 1].item()), 4)
+            for action_id, name in AVA_CLASS_IDS.items()
         }
         if activity not in CANONICAL_CLASSES:
             probabilities[activity] = round(confidence, 4)
@@ -176,25 +174,19 @@ class AvaActivityPredictor:
         scale = 256.0 / min(height, width)
         resized_width = round(width * scale)
         resized_height = round(height * scale)
-        resized_frames = []
+        clip_frames = []
         for index in indices:
             rgb = cv2.cvtColor(np.asarray(frames[index]), cv2.COLOR_BGR2RGB)
-            resized_frames.append(
-                cv2.resize(
-                    rgb,
-                    (resized_width, resized_height),
-                    interpolation=cv2.INTER_LINEAR,
-                )
+            resized = cv2.resize(
+                rgb,
+                (resized_width, resized_height),
+                interpolation=cv2.INTER_LINEAR,
             )
+            clip_frames.append(resized)
 
-        clip = (
-            torch.from_numpy(np.stack(resized_frames))
-            .permute(3, 0, 1, 2)
-            .float()
-            / 255.0
-        )
-        mean = torch.tensor([0.45, 0.45, 0.45]).view(3, 1, 1, 1)
-        std = torch.tensor([0.225, 0.225, 0.225]).view(3, 1, 1, 1)
+        clip = torch.from_numpy(np.stack(clip_frames)).permute(3, 0, 1, 2).float() / 255.0
+        mean = torch.tensor([0.45, 0.45, 0.45], dtype=clip.dtype).view(3, 1, 1, 1)
+        std = torch.tensor([0.225, 0.225, 0.225], dtype=clip.dtype).view(3, 1, 1, 1)
         clip = (clip - mean) / std
 
         box[[0, 2]] *= resized_width / width
@@ -202,7 +194,7 @@ class AvaActivityPredictor:
         box[[0, 2]] = np.clip(box[[0, 2]], 0, resized_width)
         box[[1, 3]] = np.clip(box[[1, 3]], 0, resized_height)
         if box[2] <= box[0] or box[3] <= box[1]:
-            raise ValueError("person_box must have positive area inside the frame")
+            raise ValueError("person_box must have positive area inside the video frame")
 
         model_boxes = torch.tensor(
             [[0.0, *(float(value) for value in box)]],

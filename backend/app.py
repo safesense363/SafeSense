@@ -6,6 +6,7 @@ event querying, event ingestion, and explainable risk configuration.
 from pathlib import Path
 import threading
 import time
+import platform
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,9 +69,14 @@ def get_health():
     camera_ok = False
     try:
         import cv2
-        cap = cv2.VideoCapture(0)
-        camera_ok = cap.isOpened()
-        cap.release()
+        camera_backends = ([cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+                           if platform.system() == "Windows" else [cv2.CAP_ANY])
+        for backend in camera_backends:
+            cap = cv2.VideoCapture(0, backend)
+            camera_ok = cap.isOpened()
+            cap.release()
+            if camera_ok:
+                break
     except Exception:
         camera_ok = False
 

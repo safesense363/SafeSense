@@ -84,6 +84,101 @@ Alert Generation
       ↓
 Dashboard & Event Logging
 
+## Live Camera Demo
+
+The live camera pipeline opens a native OpenCV window; the browser dashboard
+does not access or start the webcam. The default activity recognizer is the
+pretrained PyTorchVideo Slow R50 detector, fine-tuned on AVA person-action
+labels. Its labels include standing, walking, sitting, running, falling, lying
+down, and other AVA actions. First startup downloads the pretrained weights;
+CPU inference is slower than the local GRU and action scores are not calibrated
+probabilities. In this workspace, a real-camera action prediction took about
+1.3 seconds; performance depends on the CPU and camera workload.
+
+Install dependencies if needed, then start the API in one PowerShell terminal
+if you want events to appear on the dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn backend.app:app --reload
+```
+
+In a second terminal, start camera capture and live pose/activity inference:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --camera 0
+```
+
+By default, `--device auto` selects CUDA when the installed PyTorch build can
+use it. CUDA runs use the larger `yolo26s-pose.pt` checkpoint for pose
+detection and run the selected activity recognizer on the GPU. CPU-only
+systems use `yolo26n-pose.pt` and CPU inference. The larger pose weights are
+downloaded automatically by Ultralytics on first use. Select a device
+explicitly with `--device cpu` or `--device cuda`; an explicit CUDA request
+fails with setup guidance if CUDA is unavailable. CUDA acceleration can reduce
+latency, but does not by itself guarantee more accurate activity labels.
+
+The window overlays detected pose landmarks with the latest activity,
+confidence, and risk label. The first activity prediction appears after 30
+detected pose frames; subsequent predictions use a five-frame stride. Press
+**Q** or **Esc** while the camera window is focused to stop the pipeline.
+Use `--camera 1` to try another device index or `--no-display` for headless
+inference. Use `--activity-model gru` to run the older local skeleton GRU
+instead. Close other apps using the webcam and allow desktop camera access in
+Windows **Settings > Privacy & security > Camera** if the device cannot open.
+
+The pretrained AVA model recognizes actions from general video footage; its
+performance can vary with camera angle, distance, occlusion, and lighting. It
+does not guarantee perfect activity recognition. Validate it with labeled
+clips from the target camera before relying on any safety alert.
+
+### Improve accuracy for your camera
+
+The webcam-calibrated GRU trains on your camera's pose sequences and is much
+lighter at inference than the AVA RGB detector. Collect each activity in
+separate train, validation, and test recordings. Use distinct recording IDs;
+never split overlapping windows from one recording across those partitions.
+For a personal model, `--allow-subject-overlap` explicitly allows the same
+person in all three partitions while keeping recordings separate. This only
+measures performance on new recordings of that person, not on unseen people.
+
+Example for one recording (repeat with a new recording ID for each activity
+and each split; the collector supports `standing`, `walking`, `sitting`,
+`running`, `falling`, and `lying_down`):
+
+```powershell
+.\.venv\Scripts\python.exe tools\collect_webcam.py --subject me --recording standing-train-01 --label standing --split train --duration 30 --allow-subject-overlap
+.\.venv\Scripts\python.exe tools\collect_webcam.py --subject me --recording standing-validation-01 --label standing --split validation --duration 30 --allow-subject-overlap
+.\.venv\Scripts\python.exe tools\collect_webcam.py --subject me --recording standing-test-01 --label standing --split test --duration 30 --allow-subject-overlap
+```
+
+Once every class has enough labeled windows in all three splits, train and
+evaluate without replacing the pretrained/default model:
+
+```powershell
+.\.venv\Scripts\python.exe -m features.train_webcam_gru --allow-subject-overlap
+```
+
+The trainer requires at least 10 training and 3 validation/test sequences per
+class, selects checkpoints using recording-level validation macro-F1, and
+reports both window-level and recording-level held-out metrics. It refuses
+incomplete datasets and won't overwrite an existing checkpoint unless
+`--overwrite` is supplied. Review
+`reports/safesense_gru_webcam_metrics.json` before using the personalized model.
+To run that model:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --activity-model gru --model models/safesense_gru_webcam.pt
+```
+
+More overlapping windows from the same clip do not count as independent
+evidence; collect separate takes, and include varied lighting, distance, and
+camera angles relevant to expected use.
+
+The API and camera pipeline are separate processes. Starting the dashboard or
+API alone does not launch the camera; when the API is unavailable, inference
+events are written to `reports/live_events.jsonl`.
+
 ---
 
 ## Technology Stack
