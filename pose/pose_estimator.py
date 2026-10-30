@@ -12,10 +12,12 @@ class PoseEstimator:
     def __init__(
         self,
         model_path="yolo26n-pose.pt",
-        confidence=0.5
+        confidence=0.5,
+        device="cpu",
     ):
         self.model_path = model_path
         self.confidence = confidence
+        self.device = device
 
         self.model = YOLO(self.model_path)
 
@@ -33,7 +35,8 @@ class PoseEstimator:
         results = self.model.predict(
             source=frame,
             conf=self.confidence,
-            verbose=False
+            verbose=False,
+            device=self.device,
         )
 
         return results[0]
