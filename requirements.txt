@@ -1,2 +1,6 @@
 opencv-python
 numpy
+torch
+torchvision
+ultralytics
+pytorchvideo==0.1.5

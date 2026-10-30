@@ -1,0 +1,44 @@
+﻿{
+  "schema_version": "1.0",
+  "project": "SafeSense",
+  "task": "human_activity_recognition",
+  "sequence": {
+    "window_size": 30,
+    "stride": 5,
+    "shape": [30, 17, 3],
+    "dtype": "float32",
+    "keypoint_format": ["x", "y", "confidence"]
+  },
+  "classes": [
+    {
+      "id": 0,
+      "name": "standing",
+      "display_name": "Standing"
+    },
+    {
+      "id": 1,
+      "name": "walking",
+      "display_name": "Walking"
+    },
+    {
+      "id": 2,
+      "name": "sitting",
+      "display_name": "Sitting"
+    },
+    {
+      "id": 3,
+      "name": "running",
+      "display_name": "Running"
+    },
+    {
+      "id": 4,
+      "name": "falling",
+      "display_name": "Falling"
+    },
+    {
+      "id": 5,
+      "name": "lying_down",
+      "display_name": "Lying down"
+    }
+  ]
+}

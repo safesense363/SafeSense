@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "project": "SafeSense",
+  "description": "Configurable laboratory safety and explainable risk rules",
+  "thresholds": {
+    "keypoint_confidence": 0.30,
+    "activity_confidence": 0.35
+  },
+  "base_risk_scores": {
+    "falling": 0.85,
+    "lying_down": 0.65,
+    "running": 0.40,
+    "sitting": 0.0,
+    "standing": 0.0,
+    "walking": 0.0
+  },
+  "persistence_windows": {
+    "falling": 2,
+    "lying_down": 2,
+    "running": 3
+  },
+  "cooldown_seconds": {
+    "falling": 10.0,
+    "lying_down": 8.0,
+    "running": 5.0
+  },
+  "zones": [
+    {
+      "name": "restricted_machinery_zone",
+      "bbox": [0.0, 0.0, 0.35, 0.50],
+      "risk_escalation": 0.30,
+      "description": "Restricted Machinery & High-Voltage Zone"
+    }
+  ]
+}

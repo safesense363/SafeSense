@@ -3,89 +3,65 @@ import numpy as np
 
 class SkeletonProcessor:
     """
-    Converts pose-estimation output into a normalized
-    skeleton representation suitable for temporal
-    activity recognition.
+    Converts pose-estimator output into camera-relative
+    skeleton coordinates.
+
+    Output shape: (17, 3)
+    Features: normalized camera x, normalized camera y,
+    and keypoint confidence.
     """
 
     def __init__(self, normalize=True):
         self.normalize = normalize
 
-    def process(self, person):
-        """
-        Process one detected person's pose.
-
-        Args:
-            person: Dictionary containing:
-                keypoints: (17, 2)
-                confidence: (17,)
-
-        Returns:
-            Skeleton array of shape (17, 3):
-                [x, y, confidence]
-        """
-
+    def process(self, person, frame_shape=None):
         keypoints = np.asarray(
-            person["keypoints"],
-            dtype=np.float32
+            person["keypoints"], dtype=np.float32
         )
-
         confidence = person.get("confidence")
 
-        if confidence is None:
-            confidence = np.ones(
-                keypoints.shape[0],
-                dtype=np.float32
+        if keypoints.shape != (17, 2):
+            raise ValueError(
+                f"Expected keypoints (17, 2), got {keypoints.shape}"
             )
+
+        if confidence is None:
+            confidence = np.ones(17, dtype=np.float32)
         else:
             confidence = np.asarray(
-                confidence,
-                dtype=np.float32
+                confidence, dtype=np.float32
             )
+
+        if confidence.shape != (17,):
+            raise ValueError(
+                f"Expected confidence (17,), got {confidence.shape}"
+            )
+
+        if not np.isfinite(keypoints).all():
+            raise ValueError("Keypoints contain invalid values")
+
+        if not np.isfinite(confidence).all():
+            raise ValueError("Confidence contains invalid values")
 
         if self.normalize:
-            keypoints = self._normalize_keypoints(
-                keypoints
-            )
+            if frame_shape is None:
+                raise ValueError(
+                    "frame_shape=(height, width) is required "
+                    "for camera-relative normalization"
+                )
 
-        skeleton = np.concatenate(
-            [
-                keypoints,
-                confidence[:, None]
-            ],
-            axis=1
-        )
+            height, width = frame_shape[:2]
 
-        return skeleton
+            if height <= 0 or width <= 0:
+                raise ValueError("Invalid frame dimensions")
 
-    def _normalize_keypoints(self, keypoints):
-        """
-        Normalize keypoints relative to the person's
-        bounding extent.
+            keypoints = keypoints.copy()
+            keypoints[:, 0] /= width
+            keypoints[:, 1] /= height
 
-        Output coordinates are approximately in [0, 1].
-        """
+        confidence = np.clip(confidence, 0.0, 1.0)
 
-        min_xy = np.min(
-            keypoints,
-            axis=0
-        )
-
-        max_xy = np.max(
-            keypoints,
-            axis=0
-        )
-
-        scale = max_xy - min_xy
-
-        scale = np.where(
-            scale < 1e-6,
-            1.0,
-            scale
-        )
-
-        normalized = (
-            keypoints - min_xy
-        ) / scale
-
-        return normalized
+        return np.concatenate(
+            [keypoints, confidence[:, None]],
+            axis=1,
+        ).astype(np.float32)

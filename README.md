@@ -10,6 +10,33 @@ The system combines computer vision, human pose/skeleton representation,
 deep learning-based temporal activity recognition, risk assessment,
 real-time inference and automated alert generation.
 
+## Live Webcam Pose and Activity
+
+Install the runtime dependencies, then start the live camera from the project
+root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py --camera 0
+```
+
+The native OpenCV window draws the YOLO pose and labels the current activity
+using a pretrained Slow R50 AVA action model. Press **Q** or **Esc** while the
+window is focused to stop. The first run may download model weights. By
+default, `--device auto` uses CUDA when available: it selects the larger
+`yolo26s-pose.pt` pose model and moves AVA inference to the GPU. CPU-only
+systems use `yolo26n-pose.pt` and CPU inference. Use `--device cpu` to force
+CPU, or `--device cuda` to require CUDA. The activity prediction is updated
+periodically from short clips. The first activity label requires 30 detected
+person frames; on a CPU-only machine this can take noticeable time. Labels and
+scores are not calibrated probabilities or a guarantee of correct activity
+recognition.
+
+For headless inference use `--no-display`. To select another local pose model,
+pass `--pose-model path\to\model.pt`. If the webcam cannot be opened, check
+Windows camera privacy permissions, close other apps using the camera, or try
+another index with `--camera 1`.
+
 ---
 
 ## Problem Statement

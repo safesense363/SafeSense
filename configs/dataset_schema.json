@@ -1,0 +1,41 @@
+﻿{
+  "schema_version": "1.0",
+  "metadata_file": "metadata.csv",
+  "required_fields": [
+    "sequence_id",
+    "label_id",
+    "label",
+    "source",
+    "subject_id",
+    "recording_id",
+    "start_frame",
+    "end_frame",
+    "split"
+  ],
+  "field_types": {
+    "sequence_id": "string",
+    "label_id": "integer",
+    "label": "string",
+    "source": "string",
+    "subject_id": "string",
+    "recording_id": "string",
+    "start_frame": "integer",
+    "end_frame": "integer",
+    "split": "string"
+  },
+  "allowed_values": {
+    "source": [
+      "ntu_rgbd",
+      "safesense"
+    ],
+    "split": [
+      "train",
+      "validation",
+      "test"
+    ]
+  },
+  "sequence_contract": {
+    "shape": [30, 17, 3],
+    "dtype": "float32"
+  }
+}
