@@ -1,6 +1,6 @@
-"""SafeSense AI — Main Pipeline Entry Point.
+"""SafeSense AI Ã¢â‚¬â€ Main Pipeline Entry Point.
 
-Launches the full real-time camera → pose → activity → risk pipeline and
+Launches the full real-time camera Ã¢â€ â€™ pose Ã¢â€ â€™ activity Ã¢â€ â€™ risk pipeline and
 publishes each inference result to the FastAPI event store so the live
 dashboard updates automatically.
 
@@ -15,7 +15,7 @@ Usage::
     # Use a different trained model checkpoint
     python main.py --model models/safesense_gru_baseline.pt
 
-    # Demo mode — streams synthetic events; no camera required
+    # Demo mode Ã¢â‚¬â€ streams synthetic events; no camera required
     python main.py --demo
 
     # Run pipeline only, no API push (standalone / offline)
@@ -29,22 +29,20 @@ import argparse
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 import time
-from collections import deque
 
 import cv2
 import numpy as np
 import torch
 
-import cv2
-import numpy as np
-import torch
-
+from backend.event_publisher import EventPublisher
 from features.sequence_builder import SkeletonSequenceBuilder
 from features.skeleton import SkeletonProcessor
 from models.ava_activity_predictor import AvaActivityPredictor
 from models.activity_predictor import ActivityPredictor
 from models.runtime_device import pose_model_for_device, resolve_runtime_device
 from pose.pose_estimator import PoseEstimator
+from risk.risk_analyzer import RiskAnalyzer
+
 
 
 def _parse_args():
@@ -410,6 +408,8 @@ def _render_live_frame(pose_result, person_count, display_state_or_activity, con
         f"{activity} ({confidence_label})"
     )
 
+    annotated = pose_result.plot()
+
     cv2.rectangle(annotated, (0, 0), (annotated.shape[1], 58), (20, 25, 35), -1)
     cv2.putText(
         annotated,
@@ -456,7 +456,7 @@ def _render_live_frame(pose_result, person_count, display_state_or_activity, con
     return annotated
 
 
-# ─── Entry Point ──────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Entry Point Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 def run_live(args: argparse.Namespace, publisher: EventPublisher | None = None) -> None:
     """Entry point for live inference (used by tests and CLI)."""
