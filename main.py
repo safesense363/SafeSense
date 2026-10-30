@@ -1,4 +1,4 @@
-﻿"""SafeSense AI — Main Pipeline Entry Point.
+"""SafeSense AI — Main Pipeline Entry Point.
 
 Launches the full real-time camera → pose → activity → risk pipeline and
 publishes each inference result to the FastAPI event store so the live
@@ -155,13 +155,15 @@ def _run_live(args: argparse.Namespace, publisher: EventPublisher) -> None:
     else:
         print(f"Using CPU inference and lightweight pose model {pose_model}.")
 
-    if args.activity_model == "ava":
+    activity_model = getattr(args, "activity_model", "ava")
+    if activity_model == "ava":
         print("Loading pretrained AVA person-action model (first run downloads its weights).")
         activity_predictor = AvaActivityPredictor(device=str(device))
     else:
-        print(f"Loading GRU model: {args.model} on {device}")
+        model_path = getattr(args, "model", "models/safesense_gru_baseline.pt")
+        print(f"Loading GRU model: {model_path} on {device}")
         activity_predictor = ActivityPredictor(
-            model_path=args.model,
+            model_path=model_path,
             device=str(device),
         )
     risk_analyzer = RiskAnalyzer()
@@ -182,11 +184,18 @@ def _run_live(args: argparse.Namespace, publisher: EventPublisher) -> None:
                 risk_level=event["risk_level"],
             )
 
+    quiet = getattr(args, "quiet", False)
+    no_display = getattr(args, "no_display", False)
+    no_api = getattr(args, "no_api", False)
+    api_url = getattr(args, "api_url", "http://localhost:8000/api/events")
+    camera_idx = getattr(args, "camera", 0)
+    fps = getattr(args, "fps", 15)
+
     inference_function = _make_inference_function(
         activity_predictor,
         risk_analyzer,
         publisher,
-        quiet=args.quiet,
+        quiet=quiet,
         on_result=update_display_state,
     )
 
@@ -380,12 +389,17 @@ def _extract_person_box(pose_result, person_index):
     return boxes.xyxy[person_index].detach().cpu().numpy().astype(np.float32)
 
 
-def _render_live_frame(pose_result, person_count, display_state):
+def _render_live_frame(pose_result, person_count, display_state_or_activity, confidence=None):
     """Render pose landmarks and the latest temporal activity prediction."""
-    annotated = pose_result.plot()
-    activity = display_state["activity"]
-    confidence = display_state["confidence"]
-    confidence_label = f"{confidence:.1%}" if confidence is not None else "--"
+    if isinstance(display_state_or_activity, dict):
+        activity = display_state_or_activity["activity"]
+        confidence = display_state_or_activity["confidence"]
+        risk_level = display_state_or_activity.get("risk_level")
+        confidence_label = f"{confidence:.1%}" if confidence is not None else "--"
+    else:
+        activity = display_state_or_activity
+        risk_level = None
+        confidence_label = f"{int(round(confidence * 100))}%" if confidence is not None else "--"
     pose_label = (
         f"POSE: DETECTED ({person_count})"
         if person_count
@@ -409,14 +423,25 @@ def _render_live_frame(pose_result, person_count, display_state):
     )
     cv2.putText(
         annotated,
-        f"RISK: {display_state['risk_level']}",
-        (12, 48),
+        "Q / Esc: quit",
+        (annotated.shape[1] - 120, 23),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (80, 220, 255),
+        0.45,
+        (180, 180, 180),
         1,
         cv2.LINE_AA,
     )
+    if risk_level is not None:
+        cv2.putText(
+            annotated,
+            f"RISK: {risk_level}",
+            (12, 48),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (80, 220, 255),
+            1,
+            cv2.LINE_AA,
+        )
     if person_count == 0:
         cv2.putText(
             annotated,
@@ -432,6 +457,16 @@ def _render_live_frame(pose_result, person_count, display_state):
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
+
+def run_live(args: argparse.Namespace, publisher: EventPublisher | None = None) -> None:
+    """Entry point for live inference (used by tests and CLI)."""
+    if publisher is None:
+        publisher = EventPublisher(
+            api_url=getattr(args, "api_url", "http://localhost:8000/api/events"),
+            enabled=not getattr(args, "no_api", False),
+        )
+    return _run_live(args, publisher)
+
 
 def main():
     run_live(_parse_args())

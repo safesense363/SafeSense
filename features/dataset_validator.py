@@ -42,13 +42,10 @@ def validate_sequence(sequence: np.ndarray) -> np.ndarray:
 
 
 def validate_label(label_id: int) -> int:
-    """Validate that a label index is within the canonical range.
-
-    The tests expect a ``ValueError`` when the id is ``6`` (out of range).
-    """
-    if not isinstance(label_id, int) or not (0 <= label_id < len(CANONICAL_CLASSES)):
+    """Validate that a label index is within the canonical range."""
+    if not isinstance(label_id, (int, np.integer)) or not (0 <= int(label_id) < len(CANONICAL_CLASSES)):
         raise ValueError("invalid label id")
-    return label_id
+    return int(label_id)
 
 
 def validate_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -79,7 +76,7 @@ def validate_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     if not (0 <= label_id < len(CANONICAL_CLASSES)):
         raise ValueError("invalid label_id")
     if CANONICAL_CLASSES[label_id] != label:
-        raise ValueError("label mismatch")
+        raise ValueError("Label mismatch: label_id does not match label")
 
     # Split validation
     if metadata["split"] not in ALLOWED_SPLITS:
