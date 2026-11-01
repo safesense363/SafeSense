@@ -4,9 +4,9 @@ Provides RESTful endpoints for system health, real-time pipeline status,
 event querying, event ingestion, and explainable risk configuration.
 """
 from pathlib import Path
+import sqlite3
 import threading
 import time
-import platform
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +42,7 @@ app.add_middleware(
 event_store = EventStore()
 risk_analyzer = RiskAnalyzer()
 MODEL_PATH = PROJECT_ROOT / "models" / "safesense_gru_baseline.pt"
+INFERENCE_FRESHNESS_SECONDS = 5.0
 
 
 @app.get("/", tags=["Root"])
@@ -62,44 +63,48 @@ def root():
 
 @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
 def get_health():
-    """Verify system health, model presence, and camera availability."""
+    """Report backend, model-file, and database health without opening a camera."""
     model_exists = MODEL_PATH.exists()
-
-    # Fast camera availability check
-    camera_ok = False
     try:
-        import cv2
-        camera_backends = ([cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
-                           if platform.system() == "Windows" else [cv2.CAP_ANY])
-        for backend in camera_backends:
-            cap = cv2.VideoCapture(0, backend)
-            camera_ok = cap.isOpened()
-            cap.release()
-            if camera_ok:
-                break
-    except Exception:
-        camera_ok = False
+        database_available = event_store.check_available()
+    except sqlite3.Error:
+        database_available = False
 
     return HealthResponse(
-        status="healthy" if model_exists else "degraded",
+        status="healthy" if model_exists and database_available else "degraded",
         timestamp=time.time(),
-        model_loaded=model_exists,
+        model_available=model_exists,
         model_path=str(MODEL_PATH.name),
-        camera_available=camera_ok,
-        device="cpu",
+        camera_available=None,
+        database_available=database_available,
+        device=None,
         active_threads=threading.active_count(),
     )
 
 
 @app.get("/api/status", response_model=PipelineStatusResponse, tags=["Pipeline"])
 def get_status():
-    """Return pipeline execution metrics."""
+    """Report inference freshness without inventing unmeasured runtime metrics."""
+    now = time.time()
+    try:
+        last_event_timestamp = event_store.latest_event_timestamp
+        total_events = event_store.total_recorded
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Event database is unavailable.",
+        ) from exc
+    inference_is_fresh = (
+        last_event_timestamp is not None
+        and 0 <= now - last_event_timestamp <= INFERENCE_FRESHNESS_SECONDS
+    )
     return PipelineStatusResponse(
-        is_running=True,
-        frames_received=0,
-        poses_detected=0,
-        sequences_submitted=event_store.total_recorded,
-        estimated_fps=15.0,
+        is_running=inference_is_fresh,
+        frames_received=None,
+        poses_detected=None,
+        sequences_submitted=total_events,
+        estimated_fps=0.0,
+        last_event_timestamp=last_event_timestamp,
     )
 
 
@@ -110,9 +115,20 @@ def get_events(
     only_alerts: bool = Query(False, description="Filter for triggered alerts only"),
 ):
     """Retrieve recent activity recognition and risk detection events."""
-    raw_events = event_store.get_events(limit=limit, min_risk=min_risk, only_alerts=only_alerts)
+    try:
+        raw_events = event_store.get_events(
+            limit=limit,
+            min_risk=min_risk,
+            only_alerts=only_alerts,
+        )
+        total_events = event_store.total_recorded
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Event database is unavailable.",
+        ) from exc
     return EventListResponse(
-        total_events=event_store.total_recorded,
+        total_events=total_events,
         returned_count=len(raw_events),
         events=[EventPayload(**ev) for ev in raw_events],
     )
@@ -120,9 +136,15 @@ def get_events(
 
 @app.post("/api/events", response_model=EventPayload, status_code=status.HTTP_201_CREATED, tags=["Events"])
 def ingest_event(payload: EventPayload):
-    """Ingest a new activity recognition event into memory and disk log."""
+    """Persist an activity recognition event before acknowledging ingestion."""
     event_dict = payload.model_dump()
-    event_store.record_event(event_dict)
+    try:
+        event_store.record_event(event_dict)
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Event could not be saved; it was not recorded.",
+        ) from exc
     return payload
 
 

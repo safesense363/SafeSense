@@ -179,6 +179,22 @@ The API and camera pipeline are separate processes. Starting the dashboard or
 API alone does not launch the camera; when the API is unavailable, inference
 events are written to `reports/live_events.jsonl`.
 
+The API persists accepted events in `reports/safesense_events.sqlite3`; its
+event history and total count survive API restarts. Set
+`SAFESENSE_EVENT_DB_PATH` before starting the API to use another SQLite file.
+An ingestion request receives a success response only after the database
+commit succeeds. Existing JSONL fallback logs are retained and are not
+automatically imported into SQLite.
+
+The browser dashboard shows API, camera, model, database, and recent-inference
+health separately from safety events. The inference indicator is based on
+whether an event arrived in the last five seconds; it is not a direct camera
+process heartbeat. Frame, pose, and FPS metrics are not currently measured.
+Zone bounds are loaded from `configs/risk_config.json`, but the dashboard does
+not receive live subject coordinates. Event acknowledgement is currently a
+local banner dismissal only; persistent incident review and resolution are
+not implemented.
+
 ---
 
 ## Technology Stack

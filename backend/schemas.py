@@ -9,19 +9,21 @@ from pydantic import BaseModel, Field
 class HealthResponse(BaseModel):
     status: str = "healthy"
     timestamp: float
-    model_loaded: bool
+    model_available: bool
     model_path: str
-    camera_available: bool
-    device: str
+    camera_available: Optional[bool]
+    database_available: bool
+    device: Optional[str]
     active_threads: int
 
 
 class PipelineStatusResponse(BaseModel):
     is_running: bool
-    frames_received: int
-    poses_detected: int
-    sequences_submitted: int
+    frames_received: Optional[int]
+    poses_detected: Optional[int]
+    sequences_submitted: Optional[int]
     estimated_fps: float
+    last_event_timestamp: Optional[float]
 
 
 class EventPayload(BaseModel):

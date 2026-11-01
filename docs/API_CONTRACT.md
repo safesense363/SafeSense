@@ -8,7 +8,7 @@
 
 ## 1. System Event Schema
 
-Whenever a 30-frame skeleton window is processed by [`InferenceWorker`](file:///e:/SafeSense%20-%20Copy/video_ingestion/inference_worker.py#L6) via [`main.inference_function`](file:///e:/SafeSense%20-%20Copy/main.py#L16), it produces a structured event dictionary following this contract:
+Whenever a 30-frame skeleton window is processed by `InferenceWorker` via the live inference function, it produces a structured event dictionary following this contract:
 
 ```json
 {
@@ -47,9 +47,28 @@ Whenever a 30-frame skeleton window is processed by [`InferenceWorker`](file:///
 | `latency_ms` | `float` | Execution time of the temporal neural network in milliseconds. |
 | `sequence_shape` | `array[int]` | Dimensions of the evaluated sliding window (always `[30, 17, 3]`). |
 
+## 2. Persistence and failure behavior
+
+The API stores accepted events in SQLite at
+`reports/safesense_events.sqlite3` by default. Set
+`SAFESENSE_EVENT_DB_PATH` to select another database file. `POST /api/events`
+returns success only after the insert commits; if SQLite cannot save the event,
+the API returns HTTP 503 and does not report it as recorded. Event queries and
+the total event count are read from SQLite, so both survive API process
+restarts. The separate JSONL file is still used by the live publisher when the
+API is unavailable; existing JSONL entries are not automatically imported.
+
+`GET /api/health` includes a `database_available` check. `GET /api/status`
+reports inference as running only when the latest event timestamp is within
+five seconds of the API clock. This is a recent-event freshness indicator, not
+a camera or worker heartbeat. Frame and pose counts are `null` because they
+are not currently instrumented; estimated FPS is `0.0` and must be treated as
+unmeasured. The dashboard reads configured zone bounds from the risk-config
+endpoint; it does not receive live subject-position coordinates.
+
 ---
 
-## 2. Risk Level Semantics & Alert Policies
+## 3. Risk Level Semantics & Alert Policies
 
 | Risk Level | Trigger Condition | System Action | Dashboard Indicator |
 | :--- | :--- | :--- | :--- |
@@ -62,12 +81,16 @@ Whenever a 30-frame skeleton window is processed by [`InferenceWorker`](file:///
 
 ---
 
-## 3. Future Backend API Endpoints (Phase 6 Preview)
+## 4. Backend API Endpoints
 
-When the FastAPI service is connected in Phase 6, it will expose:
+The FastAPI service currently exposes:
 
-* `GET /health`: Health and hardware inference status.
-* `GET /status`: Latest pipeline FPS, camera state, and active worker counters.
-* `GET /events/recent`: Last $N$ detected events and risk alerts.
-* `POST /events`: Ingest structured events into persistent storage.
-* `WS /ws/live`: Real-time WebSocket stream of live pose coordinates and alert payloads.
+* `GET /api/health`: Model presence and camera availability.
+* `GET /api/status`: Pipeline status summary.
+* `GET /api/events`: Recent persisted events, with risk and alert filters.
+* `POST /api/events`: Validate and persist a structured event.
+* `GET /api/config/risk`: Active risk thresholds and zones.
+
+WebSockets, authentication, and role-based authorization are not implemented
+in this phase. The dashboard's “Dismiss Banner” action is local UI state only;
+it does not acknowledge or resolve a persistent incident.

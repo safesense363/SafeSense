@@ -14,19 +14,25 @@ let refreshTimer       = null;
 let healthTimer        = null;
 let currentFilter      = "all";
 let lastAlertTimestamp = null;
-let alertAcknowledged  = false;
-let subjectPos         = { x: 0.4, y: 0.55 };
+let alertBannerDismissed = false;
+let inferenceFresh = false;
 
 const $ = id => document.getElementById(id);
 const DOM = {
   statusDot:        $("system-status-dot"),
   statusText:       $("system-status-text"),
+  healthApi:        $("health-api"),
+  healthCamera:     $("health-camera"),
+  healthModel:      $("health-model"),
+  healthDatabase:   $("health-database"),
+  healthInference:  $("health-inference"),
+  healthNote:       $("health-note"),
   headerDevice:     $("header-device"),
   headerModel:      $("header-model"),
   alertBanner:      $("alert-banner"),
   alertTitle:       $("alert-title"),
   alertReason:      $("alert-reason"),
-  btnAckAlert:      $("btn-ack-alert"),
+  btnDismissAlert:  $("btn-dismiss-alert"),
   kpiActivity:      $("kpi-activity"),
   activityBadge:    $("activity-id-badge"),
   activityBar:      $("activity-confidence-bar"),
@@ -37,13 +43,14 @@ const DOM = {
   kpiRiskScore:     $("kpi-risk-score"),
   kpiRiskReason:    $("kpi-risk-reason"),
   kpiIncident:      $("kpi-incident-status"),
-  kpiCooldown:      $("kpi-cooldown"),
   kpiAlertCount:    $("kpi-alert-count"),
   kpiZoneStatus:    $("kpi-zone-status"),
   kpiZoneDesc:      $("kpi-zone-desc"),
   zoneCanvas:       $("zone-canvas"),
   probList:         $("prob-list"),
   eventTbody:       $("event-tbody"),
+  eventDetailsPlaceholder: $("event-details-placeholder"),
+  eventDetailsList: $("event-details-list"),
   btnToggleRefresh: $("btn-toggle-refresh"),
   filterAll:        $("filter-all"),
   filterAlerts:     $("filter-alerts"),
@@ -73,15 +80,16 @@ function clearRiskClasses(el) { RISK_CLASSES.forEach(c => el.classList.remove(c)
 
 function setStatus(online) {
   DOM.statusDot.className    = "pulse-dot " + (online ? "dot-online" : "dot-offline");
-  DOM.statusText.textContent = online ? "LIVE" : "OFFLINE";
+  DOM.statusText.textContent = online ? "API ONLINE" : "API OFFLINE";
+}
+
+function setHealthValue(element, text, state) {
+  element.textContent = text;
+  element.dataset.state = state;
 }
 
 /* ─── Zone Canvas ─── */
-const ZONES = [
-  { label:"General Lab Area",     x:0,   y:0,    w:1,    h:1,    fill:"rgba(100,220,130,0.07)", stroke:"rgba(100,220,130,0.3)" },
-  { label:"Restricted Machinery", x:0.6, y:0,    w:0.4,  h:0.5,  fill:"rgba(255,80,80,0.12)",  stroke:"rgba(255,80,80,0.5)"   },
-  { label:"Chemical Storage",     x:0,   y:0.65, w:0.35, h:0.35, fill:"rgba(255,180,0,0.1)",   stroke:"rgba(255,180,0,0.4)"   },
-];
+let zones = [];
 
 function drawCanvas() {
   const canvas = DOM.zoneCanvas;
@@ -94,32 +102,112 @@ function drawCanvas() {
   ctx.lineWidth = 1;
   for (let gx = 0; gx <= W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
   for (let gy = 0; gy <= H; gy += 40) { ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
-  ZONES.forEach(z => {
+  zones.forEach(z => {
     const zx=z.x*W, zy=z.y*H, zw=z.w*W, zh=z.h*H;
     ctx.fillStyle = z.fill; ctx.fillRect(zx,zy,zw,zh);
     ctx.strokeStyle = z.stroke; ctx.lineWidth=1.5; ctx.strokeRect(zx,zy,zw,zh);
     ctx.fillStyle = z.stroke; ctx.font="10px Inter,sans-serif"; ctx.fillText(z.label,zx+6,zy+14);
   });
-  const sx = subjectPos.x * W, sy = subjectPos.y * H;
-  const g = ctx.createRadialGradient(sx,sy,0,sx,sy,18);
-  g.addColorStop(0,"rgba(80,200,255,0.5)"); g.addColorStop(1,"rgba(80,200,255,0)");
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx,sy,18,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = "#50c8ff"; ctx.beginPath(); ctx.arc(sx,sy,6,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle="rgba(80,200,255,0.4)"; ctx.lineWidth=1; ctx.setLineDash([3,3]);
-  ctx.beginPath(); ctx.moveTo(sx,0); ctx.lineTo(sx,H); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,sy); ctx.lineTo(W,sy); ctx.stroke();
-  ctx.setLineDash([]);
+}
+
+async function pollRiskConfig() {
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/config/risk`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!response.ok) throw new Error(`Risk config HTTP ${response.status}`);
+    const config = await response.json();
+    zones = (config.zones || []).flatMap(zone => {
+      const box = zone.bbox;
+      if (!Array.isArray(box) || box.length !== 4
+        || !box.every(value => Number.isFinite(value) && value >= 0 && value <= 1)
+        || box[2] < box[0] || box[3] < box[1]) {
+        return [];
+      }
+      return [{
+        label: zone.description || zone.name || "Configured zone",
+        x: box[0],
+        y: box[1],
+        w: box[2] - box[0],
+        h: box[3] - box[1],
+        fill: "rgba(255,80,80,0.12)",
+        stroke: "rgba(255,80,80,0.7)",
+      }];
+    });
+    DOM.kpiZoneStatus.textContent = `${zones.length} CONFIGURED`;
+    DOM.kpiZoneDesc.textContent = zones.length
+      ? "Bounds are loaded from risk rules; live subject position is not available."
+      : "No valid safety zones are configured.";
+    drawCanvas();
+  } catch (error) {
+    zones = [];
+    DOM.kpiZoneStatus.textContent = "CONFIGURATION UNAVAILABLE";
+    DOM.kpiZoneDesc.textContent = error.message;
+    drawCanvas();
+  }
 }
 
 /* ─── Health ─── */
 async function pollHealth() {
   try {
-    const res  = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(5000) });
-    const data = await res.json();
+    const healthResponse = await fetch(
+      `${API_BASE}/api/health`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!healthResponse.ok) throw new Error(`Health HTTP ${healthResponse.status}`);
+    const data = await healthResponse.json();
     setStatus(true);
     DOM.headerDevice.textContent = (data.device || "cpu").toUpperCase();
-    if (!data.model_loaded) { DOM.statusText.textContent="DEGRADED"; DOM.statusDot.className="pulse-dot dot-warning"; }
-  } catch { setStatus(false); }
+    setHealthValue(DOM.healthApi, "Available", "ok");
+    setHealthValue(
+      DOM.healthCamera,
+      data.camera_available ? "Available" : "Unavailable",
+      data.camera_available ? "ok" : "warning",
+    );
+    setHealthValue(
+      DOM.healthModel,
+      data.model_loaded ? "Available" : "Unavailable",
+      data.model_loaded ? "ok" : "warning",
+    );
+    setHealthValue(
+      DOM.healthDatabase,
+      data.database_available ? "Available" : "Unavailable",
+      data.database_available ? "ok" : "warning",
+    );
+    const degraded = data.status !== "healthy";
+    DOM.healthNote.textContent = degraded
+      ? "One or more technical checks are degraded or unavailable. This is separate from safety incidents."
+      : "Technical checks are available. Inference freshness is based on recent events; it is not a camera-process heartbeat.";
+  } catch (error) {
+    setStatus(false);
+    setHealthValue(DOM.healthApi, "Unavailable", "warning");
+    setHealthValue(DOM.healthCamera, "Unknown", "unknown");
+    setHealthValue(DOM.healthModel, "Unknown", "unknown");
+    setHealthValue(DOM.healthDatabase, "Unknown", "unknown");
+    setHealthValue(DOM.healthInference, "Unknown", "unknown");
+    DOM.healthNote.textContent = `Health check failed: ${error.message}`;
+  }
+}
+
+async function pollInferenceStatus() {
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/status`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!response.ok) throw new Error(`Status HTTP ${response.status}`);
+    const pipeline = await response.json();
+    inferenceFresh = Boolean(pipeline.is_running);
+    setHealthValue(
+      DOM.healthInference,
+      inferenceFresh ? "Recent event received" : "No recent inference event",
+      inferenceFresh ? "ok" : "unknown",
+    );
+  } catch {
+    inferenceFresh = false;
+    setHealthValue(DOM.healthInference, "Status unavailable", "unknown");
+  }
 }
 
 /* ─── Probability bars ─── */
@@ -127,36 +215,80 @@ function renderProbList(probs) {
   if (!probs || !Object.keys(probs).length) {
     DOM.probList.innerHTML = "<p class='prob-empty'>No probability data.</p>"; return;
   }
-  DOM.probList.innerHTML = Object.entries(probs)
-    .sort((a,b)=>b[1]-a[1])
-    .map(([cls,p]) => {
-      const pct = (p*100).toFixed(1);
-      return `<div class="prob-row">
-        <span class="prob-label">${cls}</span>
-        <div class="prob-bar-bg"><div class="prob-bar-fill" style="width:${Math.max(pct,0.5)}%"></div></div>
-        <span class="prob-val">${pct}%</span></div>`;
-    }).join("");
+  DOM.probList.replaceChildren();
+  Object.entries(probs).sort((a,b)=>b[1]-a[1]).forEach(([cls,p]) => {
+    const pct = (p*100).toFixed(1);
+    const row = document.createElement("div");
+    row.className = "prob-row";
+    const label = document.createElement("span");
+    label.className = "prob-label";
+    label.textContent = cls;
+    const bar = document.createElement("div");
+    bar.className = "prob-bar-bg";
+    const fill = document.createElement("div");
+    fill.className = "prob-bar-fill";
+    fill.style.width = `${Math.max(Number(pct), 0.5)}%`;
+    bar.append(fill);
+    const value = document.createElement("span");
+    value.className = "prob-val";
+    value.textContent = `${pct}%`;
+    row.append(label, bar, value);
+    DOM.probList.append(row);
+  });
 }
 
 /* ─── Table row ─── */
-function buildRow(ev) {
+function buildRow(ev, index) {
   const meta    = RISK_META[ev.risk_level] || RISK_META.NORMAL;
   const reasons = (ev.reasons||[]).join(" · ") || "—";
-  const alert   = ev.alert_triggered ? '<span class="alert-pip">ALERT</span>' : "";
-  return `<tr class="event-row" data-risk="${ev.risk_level}">
-    <td class="td-time">${fmtTime(ev.timestamp)}</td>
-    <td class="td-activity">${ev.activity} ${alert}</td>
-    <td><span class="conf-chip">${fmtPct(ev.confidence)}</span></td>
-    <td><span class="risk-badge risk-${ev.risk_level.toLowerCase()}">${meta.label}</span></td>
-    <td>${ev.risk_score.toFixed(3)}</td>
-    <td class="td-reason">${reasons}</td></tr>`;
+  const row = document.createElement("tr");
+  row.className = "event-row";
+  row.dataset.eventIndex = String(index);
+  row.tabIndex = 0;
+  row.addEventListener("click", () => showEventDetails(ev));
+  row.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      showEventDetails(ev);
+    }
+  });
+  const values = [
+    fmtTime(ev.timestamp),
+    `${ev.activity}${ev.alert_triggered ? " — ALERT" : ""}`,
+    fmtPct(ev.confidence),
+    meta.label,
+    ev.risk_score.toFixed(3),
+    reasons,
+  ];
+  values.forEach((value, cellIndex) => {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    if (cellIndex === 5) cell.className = "td-reason";
+    row.append(cell);
+  });
+  return row;
 }
 
-/* ─── Zone eval ─── */
-function evalZone(pos) {
-  if (pos.x>0.6&&pos.y<0.5) return { status:"BREACH",  desc:"Subject in Restricted Machinery Zone!" };
-  if (pos.x<0.35&&pos.y>0.65) return { status:"WARNING", desc:"Subject near Chemical Storage Zone." };
-  return { status:"SECURE", desc:"All zones nominal." };
+function showEventDetails(event) {
+  DOM.eventDetailsPlaceholder.hidden = true;
+  DOM.eventDetailsList.replaceChildren();
+  const fields = [
+    ["Recorded at", fmtTime(event.timestamp)],
+    ["Activity", event.activity],
+    ["Model", event.model || "Not reported"],
+    ["Risk level", event.risk_level],
+    ["Risk score", Number(event.risk_score).toFixed(3)],
+    ["Confidence", fmtPct(event.confidence)],
+    ["Incident type", event.incident_type || "Not reported"],
+    ["Rationale", (event.reasons || []).join(" · ") || "No rationale provided"],
+  ];
+  fields.forEach(([label, value]) => {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    DOM.eventDetailsList.append(term, description);
+  });
 }
 
 /* ─── Apply latest event to KPIs ─── */
@@ -178,32 +310,24 @@ function applyEvent(ev) {
   DOM.riskScoreCircle.classList.add(meta.cls);
 
   if (ev.alert_triggered) {
-    DOM.kpiIncident.textContent = "INCIDENT";
-    DOM.kpiCooldown.textContent = "ACTIVE";
-    DOM.kpiAlertCount.textContent = (parseInt(DOM.kpiAlertCount.textContent,10)||0) + 1;
-  } else if (ev.risk_level==="NORMAL") {
-    DOM.kpiIncident.textContent = "ALL CLEAR";
-    DOM.kpiCooldown.textContent = "INACTIVE";
+    DOM.kpiIncident.textContent = "ALERT EVENT";
+    DOM.kpiAlertCount.textContent = "YES";
+  } else {
+    DOM.kpiIncident.textContent = "NO ALERT";
+    DOM.kpiAlertCount.textContent = "NO";
   }
 
-  const h = [...ev.activity].reduce((a,c)=>a+c.charCodeAt(0),0);
-  subjectPos = {
-    x: 0.1 + (((h*7+Math.floor(ev.timestamp))%100)/100)*0.75,
-    y: 0.1 + ((Math.floor(ev.risk_score*100)%80)/100)*0.75,
-  };
-  const zone = evalZone(subjectPos);
-  DOM.kpiZoneStatus.textContent = zone.status;
-  DOM.kpiZoneDesc.textContent   = zone.desc;
   renderProbList(ev.probabilities);
 
-  if ((ev.risk_level==="HIGH"||ev.risk_level==="CRITICAL") && ev.alert_triggered) {
-    if (ev.timestamp!==lastAlertTimestamp) { lastAlertTimestamp=ev.timestamp; alertAcknowledged=false; }
-    if (!alertAcknowledged) {
+  if ((ev.risk_level==="HIGH"||ev.risk_level==="CRITICAL")
+    && ev.alert_triggered && inferenceFresh) {
+    if (ev.timestamp!==lastAlertTimestamp) { lastAlertTimestamp=ev.timestamp; alertBannerDismissed=false; }
+    if (!alertBannerDismissed) {
       DOM.alertTitle.textContent  = `${meta.label} INCIDENT DETECTED`;
       DOM.alertReason.textContent = (ev.reasons||[]).join(" · ") || `${ev.activity} at ${fmtPct(ev.confidence)}`;
       DOM.alertBanner.classList.remove("hidden");
     }
-  } else if (!alertAcknowledged) {
+  } else if (!alertBannerDismissed) {
     DOM.alertBanner.classList.add("hidden");
   }
   drawCanvas();
@@ -211,6 +335,7 @@ function applyEvent(ev) {
 
 /* ─── Events polling ─── */
 async function pollEvents() {
+  await pollInferenceStatus();
   try {
     let url = `${API_BASE}/api/events?limit=${MAX_TABLE_ROWS}`;
     if (currentFilter==="alerts")   url+="&only_alerts=true";
@@ -218,15 +343,25 @@ async function pollEvents() {
     const res  = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error("HTTP "+res.status);
     const data = await res.json();
-    setStatus(true);
     const events = data.events||[];
     if (!events.length) {
       DOM.eventTbody.innerHTML = `<tr><td colspan="6" class="empty-state">No events match current filter.</td></tr>`;
+      DOM.eventDetailsPlaceholder.hidden = false;
+      DOM.eventDetailsList.replaceChildren();
       return;
     }
-    DOM.eventTbody.innerHTML = events.map(buildRow).join("");
+    DOM.eventTbody.replaceChildren(...events.map(buildRow));
     applyEvent(events[0]);
-  } catch { setStatus(false); }
+  } catch (error) {
+    DOM.eventTbody.textContent = "";
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.className = "empty-state";
+    cell.textContent = `Unable to load event history: ${error.message}`;
+    row.append(cell);
+    DOM.eventTbody.append(row);
+  }
 }
 
 /* ─── Simulation payloads ─── */
@@ -251,14 +386,14 @@ const SIM_PAYLOADS = {
 async function simulate(type) {
   const payload = { ...SIM_PAYLOADS[type], timestamp: Date.now()/1000, sequence_shape:[30,51] };
   try {
-    await fetch(`${API_BASE}/api/events`, {
+    const response = await fetch(`${API_BASE}/api/events`, {
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify(payload), signal:AbortSignal.timeout(5000),
     });
+    if (!response.ok) throw new Error(`Event submission failed (HTTP ${response.status})`);
     await pollEvents();
-  } catch {
-    applyEvent(payload);
-    DOM.eventTbody.innerHTML = buildRow(payload) + DOM.eventTbody.innerHTML;
+  } catch (error) {
+    DOM.healthNote.textContent = `Demo event was not saved: ${error.message}`;
   }
 }
 
@@ -283,15 +418,20 @@ function setFilter(f) {
 function init() {
   drawCanvas();
   pollHealth();
+  pollRiskConfig();
   pollEvents();
   startAutoRefresh();
   healthTimer = setInterval(pollHealth, POLL_HEALTH_MS);
+  setInterval(pollRiskConfig, POLL_HEALTH_MS);
 
   DOM.btnToggleRefresh.addEventListener("click", () => {
     autoRefresh = !autoRefresh;
     autoRefresh ? startAutoRefresh() : (stopAutoRefresh(), DOM.btnToggleRefresh.textContent="Auto-Refresh: OFF", DOM.btnToggleRefresh.classList.add("btn-muted"));
   });
-  DOM.btnAckAlert.addEventListener("click", () => { alertAcknowledged=true; DOM.alertBanner.classList.add("hidden"); });
+  DOM.btnDismissAlert.addEventListener("click", () => {
+    alertBannerDismissed = true;
+    DOM.alertBanner.classList.add("hidden");
+  });
   DOM.filterAll.addEventListener("click",      () => setFilter("all"));
   DOM.filterAlerts.addEventListener("click",   () => setFilter("alerts"));
   DOM.filterCritical.addEventListener("click", () => setFilter("critical"));
