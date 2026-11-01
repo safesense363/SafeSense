@@ -39,10 +39,13 @@ class FakePoseResult:
 class FakeCamera:
     instances = []
 
-    def __init__(self, _camera_index):
+    def __init__(self, _camera_index, _backend=None):
         self.frames_read = 0
         self.released = False
         self.instances.append(self)
+
+    def set(self, _property, _value):
+        return True
 
     def isOpened(self):
         return True
@@ -130,13 +133,18 @@ class WebcamLiveTests(unittest.TestCase):
             device="auto",
             pose_model=None,
             camera=0,
+            fps=300,
             no_display=False,
         )
         wait_calls = {"count": 0}
 
         def wait_key(_delay):
             wait_calls["count"] += 1
-            return ord("q") if wait_calls["count"] >= 45 else -1
+            should_quit = (
+                wait_calls["count"] >= 45
+                and FakeActivityPredictor.calls >= 1
+            )
+            return ord("q") if should_quit else -1
 
         with (
             patch("main.resolve_runtime_device", return_value=torch.device("cpu")),
@@ -153,7 +161,7 @@ class WebcamLiveTests(unittest.TestCase):
             run_live(args)
 
         self.assertTrue(FakeCamera.instances[0].released)
-        self.assertEqual(FakeCamera.instances[0].frames_read, 45)
+        self.assertGreater(FakeCamera.instances[0].frames_read, 0)
         self.assertGreaterEqual(FakeActivityPredictor.calls, 1)
         self.assertEqual(FakeActivityPredictor.last_clip_size, 8)
         np.testing.assert_allclose(

@@ -44,6 +44,9 @@ from models.activity_predictor import ActivityPredictor
 from models.runtime_device import pose_model_for_device, resolve_runtime_device
 from pose.pose_estimator import PoseEstimator
 from risk.risk_analyzer import RiskAnalyzer
+from video_ingestion.camera import Camera
+from video_ingestion.inference_worker import InferenceWorker
+from video_ingestion.pose_worker import PoseProcessingWorker
 
 
 
@@ -51,27 +54,27 @@ def _parse_args():
     parser = argparse.ArgumentParser(
         description="Open a webcam and label live human pose and activity."
     )
-    p.add_argument("--camera",  type=int,   default=0,
+    parser.add_argument("--camera",  type=int,   default=0,
                    help="OpenCV camera device index")
-    p.add_argument("--model",   type=str,   default="models/safesense_gru_baseline.pt",
+    parser.add_argument("--model",   type=str,   default="models/safesense_gru_baseline.pt",
                    help="Path to the GRU checkpoint (.pt)")
-    p.add_argument("--activity-model", choices=("ava", "gru"), default="ava",
+    parser.add_argument("--activity-model", choices=("ava", "gru"), default="ava",
                    help="Activity recognizer: AVA pretrained RGB action detector or local GRU")
-    p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="Inference device; auto uses CUDA when available")
-    p.add_argument("--api-url", type=str,   default="http://localhost:8000/api/events",
+    parser.add_argument("--api-url", type=str,   default="http://localhost:8000/api/events",
                    help="FastAPI event ingestion endpoint")
-    p.add_argument("--no-api",  action="store_true",
+    parser.add_argument("--no-api",  action="store_true",
                    help="Disable API publishing (disk-only mode)")
-    p.add_argument("--demo",    action="store_true",
+    parser.add_argument("--demo",    action="store_true",
                    help="Demo mode: stream synthetic events without a real camera")
-    p.add_argument("--quiet",   action="store_true",
+    parser.add_argument("--quiet",   action="store_true",
                    help="Suppress per-inference console output")
-    p.add_argument("--fps",     type=int,   default=15,
+    parser.add_argument("--fps",     type=int,   default=15,
                    help="Camera capture frame rate")
-    p.add_argument("--no-display", action="store_true",
+    parser.add_argument("--no-display", action="store_true",
                    help="Run inference without opening the native camera window")
-    return p.parse_args()
+    return parser.parse_args()
 
 
 def _extract_person_box(result, person_index=0):
@@ -244,7 +247,7 @@ def _run_live(args: argparse.Namespace, publisher: EventPublisher) -> None:
 
             if sequence is not None:
                 counters["sequences"] += 1
-                if args.activity_model == "ava":
+                if activity_model == "ava":
                     person_box = _extract_person_box(result, 0)
                     if person_box is None:
                         with display_lock:
@@ -269,7 +272,7 @@ def _run_live(args: argparse.Namespace, publisher: EventPublisher) -> None:
             latest_display_frame["frame"] = annotated
 
     pose_worker = PoseProcessingWorker(process_frame)
-    camera = Camera(camera_id=args.camera, width=640, height=480, fps=args.fps)
+    camera = Camera(camera_id=camera_idx, width=640, height=480, fps=fps)
     display_window = "SafeSense AI - Live Pose"
     display_window_created = False
 
@@ -285,8 +288,8 @@ def _run_live(args: argparse.Namespace, publisher: EventPublisher) -> None:
         print("SafeSense AI pipeline running. Press Ctrl+C to stop.")
         if not args.no_display:
             print("Live pose window opened. Press Q or Esc in the window to stop.")
-        if not args.no_api:
-            print(f"Publishing events to: {args.api_url}")
+        if not no_api:
+            print(f"Publishing events to: {api_url}")
         print()
 
         stop_event = threading.Event()
